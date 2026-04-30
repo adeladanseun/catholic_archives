@@ -1,7 +1,13 @@
 from django.db import models
+from django.contrib.auth import get_user_model
+from approvals.models import ApprovalItem, ApprovalBatch
 
 # Create your models here.
-class YearlyContribution(models.Model):
+
+class YearlyContributionApprovalBatch(ApprovalBatch):
+    pass
+
+class YearlyContribution(ApprovalItem):
     GROUP_CHOICES = [
         ('men', 'Men'),
         ('women', 'Women'),
@@ -9,7 +15,8 @@ class YearlyContribution(models.Model):
         ('children', 'Children'),
     ]
     
-    serial_number = models.CharField(max_length=50, unique=True)
+    batch = models.ForeignKey(YearlyContributionApprovalBatch, on_delete=models.SET_NULL, related_name='items', null=True)
+    #serial_number = models.CharField(max_length=50, unique=True)
     payer_name = models.CharField(max_length=255, help_text="Can be individual or group name")
     group_name = models.CharField(max_length=20, choices=GROUP_CHOICES)
     year = models.IntegerField()
@@ -17,13 +24,6 @@ class YearlyContribution(models.Model):
     payment_date = models.DateField()
     notes = models.TextField(blank=True)
     
-    # Approval fields
-    is_approved = models.BooleanField(default=False)
-    approved_by = models.CharField(max_length=100, blank=True, null=True)
-    approved_at = models.DateTimeField(blank=True, null=True)
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         db_table = 'yearly_contributions'

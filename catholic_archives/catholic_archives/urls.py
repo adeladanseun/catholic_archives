@@ -11,7 +11,7 @@ from django.conf import settings
 
 from yearly_contributions.views import ContributionViewSet
 from mass_intentions.views import MassIntentionViewSet
-from approvals.views import ApprovalBatchViewSet
+#from approvals.views import ApprovalBatchViewSet
 from core.views import (
     SystemSettingViewSet, GroupRateViewSet, UserViewSet,
     UserRegistrationView, LoginView, LogoutView

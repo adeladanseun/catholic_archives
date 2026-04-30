@@ -1,13 +1,20 @@
-# mass_intentions/models.py
 from django.db import models
 from django.core.validators import MinValueValidator
+from approvals.models import ApprovalItem, ApprovalBatch
 
-class MassIntention(models.Model):
+
+class MassIntentionApprovalBatch(ApprovalBatch):
+    pass
+
+class MassIntention(ApprovalItem):
+    REGULAR = 'regular'
+    THANKSGIVING = 'thanksgiving'
+
     INTENTION_TYPE = [
-        ('regular', 'Regular Intention'),
-        ('thanksgiving', 'Open Thanksgiving'),
+        (REGULAR, 'Regular Intention'),
+        (THANKSGIVING, 'Open Thanksgiving'),
     ]
-    
+    batch = models.ForeignKey(MassIntentionApprovalBatch, on_delete=models.SET_NULL, related_name='items', null=True)
     mass_date = models.DateField()
     concerned_names = models.CharField(
         max_length=500, 
@@ -15,20 +22,13 @@ class MassIntention(models.Model):
     )
     intention_text = models.TextField()
     intention_type = models.CharField(max_length=20, choices=INTENTION_TYPE)
-    amount = models.DecimalField(
+    amount_paid = models.DecimalField(
         max_digits=10, 
         decimal_places=2,
         validators=[MinValueValidator(500)]
     )
     number_of_days = models.IntegerField(default=1, help_text="Calculated for regular intentions")
     
-    # Approval fields
-    is_approved = models.BooleanField(default=False)
-    approved_by = models.CharField(max_length=100, blank=True, null=True)
-    approved_at = models.DateTimeField(blank=True, null=True)
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         db_table = 'mass_intentions'
@@ -44,5 +44,5 @@ class MassIntention(models.Model):
     def save(self, *args, **kwargs):
         # Auto-calculate number of days for regular intentions
         if self.intention_type == 'regular' and self.amount:
-            self.number_of_days = int(self.amount / 500)
+            self.number_of_days = int(self.amount / 500)#get rate instead of using 500
         super().save(*args, **kwargs)

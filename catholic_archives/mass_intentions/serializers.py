@@ -1,7 +1,8 @@
 # mass_intentions/serializers.py
 from rest_framework import serializers
-from .models import MassIntention
+from .models import MassIntention, MassIntentionApprovalBatch
 from core.models import SystemSetting
+from approvals.serializers import *
 
 class MassIntentionSerializer(serializers.ModelSerializer):
     class Meta:
@@ -30,3 +31,17 @@ class MassIntentionSerializer(serializers.ModelSerializer):
                     )
         
         return data
+
+class MassIntentionBatchCreateSerializer(BaseBatchCreateSerializer):
+
+    class Meta:
+        model = MassIntentionApprovalBatch
+        fields = ['id', 'item_ids', 'notes', 'money_remitted']
+        item_queryset = MassIntention.objects.all()
+        item_source = 'items'
+
+    def check_item_requirements(self, item):
+        if item.batch is not None:
+            raise serializers.ValidationError(f"Item {item.id} already in a batch.")
+        if item.is_approved:
+            raise serializers.ValidationError(f"Item {item.id} is already approved.")

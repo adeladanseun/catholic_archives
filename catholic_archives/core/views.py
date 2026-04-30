@@ -87,7 +87,10 @@ class LoginView(generics.GenericAPIView):
         user = authenticate(
             username=serializer.validated_data['username'],
             password=serializer.validated_data['password']
-        )
+        ) or authenticate(
+                email=serializer.validated_data['username'],
+                password=serialilzer.validated_data['password']
+            )
         
         if not user:
             return Response({
