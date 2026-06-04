@@ -1,194 +1,271 @@
-from decimal import Decimal
-
-from django.db.models import Sum
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework import exceptions
 from django.db import transaction
-from django.contrib.contenttypes.models import ContentType
+from django.utils import timezone
+from django.db.models import Sum
 
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from core.permissions import IsPriestUser, IsSecretary, IsAuthenticated
 
-from .models import ApprovalBatch, ApprovalItem
-from .serializers import (
-    ApprovalBatchSerializer, 
-    BatchApprovalSerializer,
-    ApprovalItemSerializer
-)
-from core.permissions import *
-from yearly_contributions.models import YearlyContribution
-from mass_intentions.models import MassIntention
 
-# class ApprovalBatchViewSet(viewsets.ModelViewSet):
-#     """
-#     Priest approval workflow for contributions and mass intentions.
+class BaseApprovalBatchViewSet(viewsets.ModelViewSet):
+    """
+    Base ViewSet for approval batch workflows.
     
-#     ## Only Priests Can:
-#     - Create approval batches
-#     - View pending approvals
-#     - Approve/reject records
+    Features:
+    - POST: Create batch with items by ID
+    - GET: List & Retrieve with detailed item information
+    - PUT/PATCH: Update batch metadata (only if not approved)
+    - DELETE: Destroy batch (unlinks items, only if not approved)
+    - Custom actions: approve, reject, pending
     
-#     ## Features
-#     - Batch approve multiple records at once
-#     - Track who approved what and when
-#     - View pending approvals with totals
-#     """
-#     #queryset = ApprovalBatch.objects.all()
-#     serializer_class = ApprovalBatchSerializer
-#     permission_classes = [IsPriestUser]
+    Permission Matrix:
+    - create: Secretary only
+    - update/partial_update: Priest only (only on unapproved batches)
+    - destroy: Priest only (only on unapproved batches)
+    - list/retrieve: Any authenticated user
+    """
     
-#     def get_permissions(self):
-#         """
-#         Only priests can create approvals, but everyone can view
-#         """
-#         #if self.action in ['create', 'create_batch', 'update', 'partial_update', 'destroy']:
-#         if self.action in ['create', 'create_batch', 'destroy']:
-#             self.permission_classes = [IsSecretary]
-
-#         elif self.action in ['update', 'partial_update', 'destroy']:
-#             self.permission_classes = [IsPriestUser]
-
-#         elif self.action == 'list':
-#             self.permission_classes = [IsAuthenticated]  # Everyone can view
+    read_serializer_class = None
+    create_serializer_class = None
+    update_serializer_class = None
+    
+    def get_serializer_class(self):
+        """Dynamically select serializer based on action"""
+        if self.action in ['create', 'create_batch']:
+            return self.create_serializer_class or self.read_serializer_class
         
-#         else:
-#             self.permission_classes = [IsPriestUser]
+        if self.action in ['update', 'partial_update']:
+            return self.update_serializer_class or self.read_serializer_class
         
-#         return super().get_permissions()
+        return self.read_serializer_class
     
-#     def get_serializer_class(self):
-#         if self.action == 'create_batch':
-#             return BatchApprovalSerializer
-#         return ApprovalBatchSerializer
+    def get_permissions(self):
+        """Permission matrix for batch operations"""
+        permission_map = {
+            'create': [IsSecretary],
+            'create_batch': [IsSecretary],
+            'update': [IsPriestUser],
+            'partial_update': [IsPriestUser],
+            'destroy': [IsPriestUser],
+            'approve': [IsPriestUser],
+            'reject': [IsPriestUser],
+            'list': [IsAuthenticated],
+            'retrieve': [IsAuthenticated],
+            'pending': [IsAuthenticated],
+            'summary': [IsAuthenticated],
+        }
+        
+        permissions = permission_map.get(self.action, [IsPriestUser])
+        self.permission_classes = permissions
+        return [permission() for permission in permissions]
     
-#     @swagger_auto_schema(
-#         operation_description="Create a batch approval for multiple records",
-#         request_body=BatchApprovalSerializer,
-#         responses={
-#             201: ApprovalBatchSerializer,
-#             400: "Validation Error",
-#             403: "Permission Denied - Priest only"
-#         }
-#     )
-#     @action(detail=False, methods=['post'])
-#     def create_batch(self, request):
-#         """Secretary creates an approval batch"""
-#         serializer = BatchApprovalSerializer(data=request.data)
-#         serializer.is_valid(raise_exception=True)
+    def get_queryset(self):
+        """Default queryset from the read serializer's model"""
+        if self.read_serializer_class:
+            return self.read_serializer_class.Meta.model.objects.all()
+        return super().get_queryset()
+    
+    @swagger_auto_schema(
+        operation_description="Create a new approval batch with items",
+        responses={
+            201: "Batch created successfully",
+            400: "Validation Error",
+            403: "Permission Denied"
+        }
+    )
+    def create(self, request, *args, **kwargs):
+        """Create a batch with items by their IDs. Requires secretary permissions."""
+        try:
+            return super().create(request, *args, **kwargs)
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @swagger_auto_schema(
+        operation_description="Update batch metadata (only if not approved)",
+        responses={
+            200: "Batch updated successfully",
+            400: "Validation Error",
+            403: "Permission Denied"
+        }
+    )
+    def update(self, request, *args, **kwargs):
+        """Update batch metadata. Cannot update approved batches."""
+        return super().update(request, *args, **kwargs)
+    
+    def partial_update(self, request, *args, **kwargs):
+        """Partial update for batch. Cannot update approved batches."""
+        return super().partial_update(request, *args, **kwargs)
+    
+    def perform_create(self, serializer):
+        """Set the raised_by field and save"""
+        serializer.save(raised_by=self.request.user)
+    
+    def perform_update(self, serializer):
+        """Prevent updates on approved batches"""
+        instance = serializer.instance
+        if instance.is_approved:
+            raise exceptions.PermissionDenied(
+                "Cannot update an approved batch."
+            )
+        serializer.save()
+    
+    def perform_destroy(self, instance):
+        """Prevent deletion of approved batches"""
+        if instance.is_approved:
+            raise exceptions.PermissionDenied(
+                "Cannot delete an approved batch. "
+                "Only pending or rejected batches can be deleted."
+            )
+        self.unlink_items_from_batch(instance)
+        instance.delete()
+    
+    def unlink_items_from_batch(self, instance):
+        """Unlink all items from this batch. Override for custom handling."""
+        if hasattr(instance, 'items'):
+            instance.items.update(
+                batch=None,
+                is_approved=False,
+                approved_by=None,
+                approved_at=None
+            )
+    
+    @swagger_auto_schema(
+        operation_description="Get all pending items not yet in a batch",
+        responses={200: "List of pending items"}
+    )
+    @action(detail=False, methods=['get'], url_path='pending')
+    def pending(self, request):
+        """View all items that haven't been batched yet."""
+        if not self.read_serializer_class:
+            return Response(
+                {'error': 'Read serializer not configured'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
         
-#         data = serializer.validated_data
+        item_serializer = getattr(
+            self.read_serializer_class.Meta, 
+            'item_serializer_class', 
+            None
+        )
         
-#         with transaction.atomic():
-#             batch = ApprovalBatch.objects.create(
-#                 batch_type=data['batch_type'],
-#                 raised_by=request.user,
-#                 notes=data.get('notes', '')
-#             )
-            
-#             total_amount = Decimal('0.00')
-            
-#             # Process contributions
-#             if data.get('contribution_ids'):
-#                 contribution_ct = ContentType.objects.get_for_model(YearlyContribution)
-#                 contributions = YearlyContribution.objects.filter(
-#                     id__in=data['contribution_ids'],
-#                     is_approved=False
-#                 )
+        if not item_serializer:
+            return Response(
+                {'error': 'Item serializer not configured'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        item_model = item_serializer.Meta.model
+        unbatched_items = item_model.objects.filter(batch__isnull=True)
+        
+        serializer = item_serializer(unbatched_items, many=True, context={'request': request})
+        return Response({
+            'count': unbatched_items.count(),
+            'items': serializer.data
+        })
+    
+    @swagger_auto_schema(
+        operation_description="Get batch summary with totals",
+        responses={200: "Batch summary"}
+    )
+    @action(detail=True, methods=['get'], url_path='summary')
+    def summary(self, request, pk=None):
+        """Get detailed summary of a batch including totals."""
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        
+        total_amount = 0
+        item_count = 0
+        
+        if hasattr(instance, 'items'):
+            items = instance.items.all()
+            item_count = items.count()
+            total_amount = sum(
+                item.amount_paid if hasattr(item, 'amount_paid') else 0 
+                for item in items
+            )
+        
+        return Response({
+            'batch': serializer.data,
+            'summary': {
+                'total_items': item_count,
+                'total_amount': total_amount,
+            }
+        })
+    
+    @swagger_auto_schema(
+        operation_description="Approve all items in a batch (Priest only)",
+        responses={
+            200: "Batch approved successfully",
+            400: "Validation Error",
+            403: "Permission Denied"
+        }
+    )
+    @action(detail=True, methods=['post'], url_path='approve')
+    def approve(self, request, pk=None):
+        """Priest approves all items in the batch."""
+        instance = self.get_object()
+        
+        if not request.user.is_priest and not request.user.is_staff:
+            return Response(
+                {'error': 'Only priests can approve batches'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        try:
+            with transaction.atomic():
+                instance.approve_batch(approved_by=request.user)
                 
-#                 for contribution in contributions:
-#                     ApprovalItem.objects.create(
-#                         batch=batch,
-#                         content_type=contribution_ct,
-#                         object_id=contribution.id
-#                     )
-#                     contribution.is_approved = True
-#                     contribution.approved_by = request.user.get_full_name()
-#                     contribution.save()
-#                     total_amount += contribution.amount_paid
-            
-#             # Process mass intentions
-#             if data.get('mass_intention_ids'):
-#                 intention_ct = ContentType.objects.get_for_model(MassIntention)
-#                 intentions = MassIntention.objects.filter(
-#                     id__in=data['mass_intention_ids'],
-#                     is_approved=False
-#                 )
-                
-#                 for intention in intentions:
-#                     ApprovalItem.objects.create(
-#                         batch=batch,
-#                         content_type=intention_ct,
-#                         object_id=intention.id
-#                     )
-#                     intention.is_approved = True
-#                     intention.approved_by = request.user.get_full_name()
-#                     intention.save()
-#                     total_amount += intention.amount
-            
-#             batch.total_amount = total_amount
-#             batch.record_count = batch.items.count()
-#             batch.save()
-        
-#         return Response(
-#             ApprovalBatchSerializer(batch).data,
-#             status=status.HTTP_201_CREATED
-#         )
+                return Response({
+                    'message': 'Batch approved successfully',
+                    'approved_items': instance.items.count(),
+                    'batch_id': instance.id
+                })
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
     
-#     @swagger_auto_schema(
-#         operation_description="Get all unapproved records pending priest review",
-#         responses={
-#             200: openapi.Response(
-#                 description="Pending records for review",
-#                 examples={
-#                     "application/json": {
-#                         "contributions": {
-#                             "records": [],
-#                             "count": 5,
-#                             "total_amount": "5000"
-#                         },
-#                         "mass_intentions": {
-#                             "records": [],
-#                             "count": 3,
-#                             "total_amount": "1500"
-#                         },
-#                         "grand_total": "6500"
-#                     }
-#                 }
-#             )
-#         }
-#     )
-#     @action(detail=False, methods=['get'])
-#     def pending_approvals(self, request):
-#         """Get all unapproved records for priest review"""
-#         unapproved_contributions = YearlyContribution.objects.filter(
-#             is_approved=False
-#         ).values('id', 'payer_name', 'amount_paid', 'payment_date', 'group_name', 'year')
+    @swagger_auto_schema(
+        operation_description="Reject batch and unlink all items (Priest only)",
+        responses={
+            200: "Batch rejected successfully",
+            400: "Validation Error",
+            403: "Permission Denied"
+        }
+    )
+    @action(detail=True, methods=['post'], url_path='reject')
+    def reject(self, request, pk=None):
+        """Priest rejects batch and returns items to pending state."""
+        instance = self.get_object()
         
-#         unapproved_intentions = MassIntention.objects.filter(
-#             is_approved=False
-#         ).values('id', 'concerned_names', 'amount', 'mass_date', 'intention_type')
+        if not request.user.is_priest and not request.user.is_staff:
+            return Response(
+                {'error': 'Only priests can reject batches'},
+                status=status.HTTP_403_FORBIDDEN
+            )
         
-#         total_contribution_amount = YearlyContribution.objects.filter(
-#             is_approved=False
-#         ).aggregate(total=Sum('amount_paid'))['total'] or 0
+        reason = request.data.get('reason', '')
         
-#         total_intention_amount = MassIntention.objects.filter(
-#             is_approved=False
-#         ).aggregate(total=Sum('amount'))['total'] or 0
-        
-#         return Response({
-#             'contributions': {
-#                 'records': unapproved_contributions,
-#                 'count': len(unapproved_contributions),
-#                 'total_amount': total_contribution_amount
-#             },
-#             'mass_intentions': {
-#                 'records': unapproved_intentions,
-#                 'count': len(unapproved_intentions),
-#                 'total_amount': total_intention_amount
-#             },
-#             'grand_total': total_contribution_amount + total_intention_amount
-#         })
+        try:
+            with transaction.atomic():
+                instance.reject_batch(rejected_by=request.user, reason=reason)
+                
+                return Response({
+                    'message': 'Batch rejected and items returned to pending',
+                    'batch_id': instance.id,
+                    'reason': reason
+                })
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )

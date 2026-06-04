@@ -1,11 +1,13 @@
 from rest_framework import viewsets, status, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.authtoken.models import Token
+from rest_framework import exceptions
 
 from django.contrib.auth import authenticate, get_user_model
 from django.utils.dateparse import parse_date
+from django.utils import timezone
 
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
@@ -15,17 +17,15 @@ from .serializers import (
     SystemSettingSerializer, GroupRateSerializer,
     UserSerializer, UserRegistrationSerializer, LoginSerializer
 )
-from .permissions import IsPriestUser, IsAdminOrPriest
+from .permissions import *
 
 User = get_user_model()
+
 
 class UserRegistrationView(generics.CreateAPIView):
     queryset = User.objects.all()
     permission_classes = [IsAdminOrPriest]
     serializer_class = UserRegistrationSerializer
-    
-    def get_queryset(self):
-        return User.objects.all()
     
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -40,14 +40,15 @@ class UserRegistrationView(generics.CreateAPIView):
             'token': token.key
         }, status=status.HTTP_201_CREATED)
 
+
 class LoginView(generics.GenericAPIView):
     """
     Authenticate and receive a token for API access.
     
     ## User Roles:
-    - **priest/priest**: Priest account for approvals
-    - **secretary/secretary**: Daily data entry
-    - **admin/admin**: Full system access
+    - **priest**: Priest account for approvals
+    - **secretary**: Daily data entry
+    - **admin**: Full system access
     """
     permission_classes = [AllowAny]
     serializer_class = LoginSerializer
@@ -88,9 +89,9 @@ class LoginView(generics.GenericAPIView):
             username=serializer.validated_data['username'],
             password=serializer.validated_data['password']
         ) or authenticate(
-                email=serializer.validated_data['username'],
-                password=serialilzer.validated_data['password']
-            )
+            email=serializer.validated_data['username'],
+            password=serializer.validated_data['password']
+        )
         
         if not user:
             return Response({
@@ -106,6 +107,7 @@ class LoginView(generics.GenericAPIView):
             'message': f'Welcome Father {user.last_name}' if user.is_priest() else f'Welcome {user.first_name}'
         })
 
+
 class LogoutView(generics.GenericAPIView):
     """Logout by deleting your token"""
     permission_classes = [IsAuthenticated]
@@ -115,20 +117,21 @@ class LogoutView(generics.GenericAPIView):
         responses={200: "Successfully logged out"}
     )
     def post(self, request):
-        # Delete the user's token to logout
         Token.objects.filter(user=request.user).delete()
         return Response({'message': 'Successfully logged out'})
+
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
-    permission_classes = [IsAdminOrPriest]  # Only admin and priest can manage users
+    permission_classes = [IsAdminOrPriest]
     
     @action(detail=False, methods=['get'])
     def me(self, request):
         """Get current logged-in user's profile"""
         serializer = self.get_serializer(request.user)
         return Response(serializer.data)
+
 
 class SystemSettingViewSet(viewsets.ModelViewSet):
     queryset = SystemSetting.objects.all()
@@ -138,6 +141,7 @@ class SystemSettingViewSet(viewsets.ModelViewSet):
     
     def get_object(self):
         return SystemSetting.objects.get(key=self.kwargs['key'])
+
 
 class GroupRateViewSet(viewsets.ModelViewSet):
     queryset = GroupRate.objects.all()
@@ -189,4 +193,104 @@ class GroupRateViewSet(viewsets.ModelViewSet):
         
         rates = GroupRate.objects.filter(conditions)
         serializer = self.get_serializer(rates, many=True)
+        return Response(serializer.data)
+
+
+class GenericModelViewSet(viewsets.ModelViewSet):
+    """
+    Base ViewSet for models that need approval workflow.
+    
+    Features:
+    - Prevents update/delete on approved records
+    - Provides approve action for individual records
+    - Provides unbatched and unapproved filters
+    """
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return self.list_serializer
+        return self.regular_serializer
+    
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            self.permission_classes = [(IsSecretary | IsAdmin)]
+        elif self.action in ['approve']:
+            self.permission_classes = [(IsPriestUser | IsAdmin)]
+        else:
+            self.permission_classes = [IsAuthenticated]
+        return [permission() for permission in self.permission_classes]
+    
+    def perform_update(self, serializer):
+        """Prevent updating approved records"""
+        if serializer.instance.is_approved:
+            raise exceptions.PermissionDenied(
+                f"Cannot update an approved {serializer.instance.__class__.__name__}."
+            )
+        serializer.save()
+    
+    def perform_destroy(self, instance):
+        """Prevent deleting approved records"""
+        if instance.is_approved:
+            raise exceptions.PermissionDenied(
+                f"Cannot delete an approved {instance.__class__.__name__}."
+            )
+        instance.delete()
+    
+    @action(detail=False, methods=['get'])
+    def unbatched(self, request):
+        """View instances not yet in any approval batch"""
+        queryset = self.queryset.filter(batch__isnull=True)
+        
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.list_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.list_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+    @swagger_auto_schema(
+        operation_description="Approve a single instance (Priest only)",
+        responses={
+            200: "Instance approved",
+            403: "Permission denied"
+        }
+    )
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """Priest approves an individual record directly"""
+        if not request.user.is_priest and not request.user.is_staff:
+            return Response(
+                {'error': 'Only priests can approve'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        instance = self.get_object()
+        if instance.is_approved:
+            return Response(
+                {'error': f'{instance.__class__.__name__} already approved'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        instance.is_approved = True
+        instance.approved_by = request.user
+        instance.approved_at = timezone.now()
+        instance.save()
+        
+        return Response({
+            'message': f'{instance.__class__.__name__} approved',
+            f'{instance.__class__.__name__.lower()}': self.list_serializer(instance).data
+        })
+
+    @action(detail=False, methods=['get'])
+    def unapproved(self, request):
+        """View instances awaiting priest approval"""
+        queryset = self.queryset.filter(is_approved=False)
+        page = self.paginate_queryset(queryset)
+        
+        if page is not None:
+            serializer = self.list_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.list_serializer(queryset, many=True)
         return Response(serializer.data)

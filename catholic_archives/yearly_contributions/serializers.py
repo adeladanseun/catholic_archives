@@ -39,7 +39,17 @@ class ContributionListSerializer(serializers.ModelSerializer):
         fields = ['id', 'payer_name', 'group_name', 'year', 
                  'amount_paid', 'payment_date', 'is_approved', 'approved_by', 'recorder']
 
-class ContributionBatchCreateSerializer(BaseBatchCreateSerializer):
+class ContributionBatchReadSerializer(ApprovalBaseBatchReadSerializer):
+    class Meta:
+        model = YearlyContributionApprovalBatch
+        # The specific serializer for the items
+        item_serializer_class = ContributionSerializer 
+        # The related_name on the ForeignKey
+        item_source = 'items' 
+        fields = ['id', 'notes', 'created_at']
+
+
+class ContributionBatchCreateSerializer(ApprovalBaseBatchCreateSerializer):
 
     class Meta:
         model = YearlyContributionApprovalBatch

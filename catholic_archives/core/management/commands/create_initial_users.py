@@ -53,7 +53,7 @@ class Command(BaseCommand):
                 'key': 'validate_contribution_amount',
                 'value': 'true',
                 'setting_type': 'boolean',
-                'description': 'Validate contribution amounts against current rates'
+                'description': 'Validate contribution amounts against current group rates'
             },
             {
                 'key': 'validate_intention_amount',
@@ -61,8 +61,25 @@ class Command(BaseCommand):
                 'setting_type': 'boolean',
                 'description': 'Validate mass intention amounts'
             },
+            {
+                'key': 'regular_intention_price',
+                'value': '500',
+                'setting_type': 'integer',
+                'description': 'Price for regular mass intention (per day)'
+            },
+            {
+                'key': 'thanksgiving_intention_price',
+                'value': '3000',
+                'setting_type': 'integer',
+                'description': 'Minimum price for thanksgiving offering'
+            },
+            {
+                'key': 'default_mass_days',
+                'value': '[6]',  # JSON list: 0=Monday, 6=Sunday
+                'setting_type': 'string',
+                'description': 'Default mass days as JSON array. 0=Monday, 6=Sunday. E.g., [6] for Sunday only, [3,6] for Thursday and Sunday'
+            }
         ]
-        
         for setting in settings_data:
             SystemSetting.objects.get_or_create(
                 key=setting['key'],

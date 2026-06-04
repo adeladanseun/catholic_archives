@@ -34,9 +34,9 @@ class SystemSetting(models.Model):
         return f"{self.key}: {self.value}"
     
     def get_value(self):
-        if self.setting_type == BOOLEAN:
+        if self.setting_type == SystemSetting.BOOLEAN:
             return self.value.lower() == 'true'
-        elif self.setting_type == INTEGER:
+        elif self.setting_type == SystemSetting.INTEGER:
             return int(self.value)
         return self.value
 
@@ -78,16 +78,25 @@ class User(AbstractUser):
     
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=SECRETARY)
     phone = models.CharField(max_length=20, blank=True)
+    church = models.ForeignKey("Church", null=True, blank=True, on_delete=models.SET_NULL, help_text="Only neccessary to associate secretary to a church in a parish")
     
     class Meta:
         db_table = 'users'
     
     def is_priest(self):
-        return self.role == PRIEST
+        return self.role == User.PRIEST
     
     def is_admin(self):
-        return self.role == ADMIN
+        return self.role == User.ADMIN
     
     def is_secretary(self):
-        return self.role == SECRETARY
+        return self.role == User.SECRETARY
+
+
+class Church(DateModel):
+    weekday_mass_days = models.JSONField(default=list, blank=True, help_text="Days of week when masses are held")
+    name = models.CharField(max_length=200, help_text="Name of the church in the parish")
+
+
+
 

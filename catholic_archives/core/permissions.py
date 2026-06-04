@@ -16,10 +16,22 @@ class IsAdminOrPriest(permissions.BasePermission):
         return request.user.is_authenticated and (
             request.user.is_admin() or request.user.is_priest()
         )
+
+class IsAdmin(permissions.BasePermission):
+    """
+    Permission for admin actions
+    """
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and (
+            request.user.is_admin()
+        )
 class IsSecretary(permissions.BasePermission):
     def has_permission(self, request, view):
         return request.user.is_authenticated and request.user.is_secretary
-    
+
+class IsAuthenticated(permissions.BasePermission):
+    def has_permission(self, request, view):
+        return request.user.is_authenticated
 class IsSecretaryOrAbove(permissions.BasePermission):
     """
     Permission for data entry (secretary, priest, or admin)

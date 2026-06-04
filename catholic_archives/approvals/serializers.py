@@ -1,46 +1,44 @@
 # approvals/serializers.py
 from rest_framework import serializers
 from .models import ApprovalBatch, ApprovalItem
-from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
 
-class ApprovalItemSerializer(serializers.ModelSerializer):
-    record_type = serializers.SerializerMethodField()
-    record_details = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = ApprovalItem
-        fields = ['id', 'content_type', 'object_id', 'record_type', 'record_details']
-    
-    def get_record_type(self, obj):
-        return obj.content_type.model
-    
-    def get_record_details(self, obj):
-        if obj.content_object:
-            return {
-                'id': obj.content_object.id,
-                'amount': str(obj.content_object.amount_paid if hasattr(obj.content_object, 'amount_paid') else obj.content_object.amount),
-                'date': str(obj.content_object.payment_date if hasattr(obj.content_object, 'payment_date') else obj.content_object.mass_date),
-                'description': str(obj.content_object)
-            }
-        return None
+class ApprovalBaseBatchReadSerializer(serializers.ModelSerializer):
+    # This acts as a placeholder; we inject the real serializer in __init__
+    items = serializers.SerializerMethodField()
 
-class ApprovalBatchSerializer(serializers.ModelSerializer):
-    items = ApprovalItemSerializer(many=True, read_only=True)
-    
-    class Meta:
-        model = ApprovalBatch
-        fields = '__all__'
-        read_only_fields = ['total_amount', 'record_count']
+    def __init__(self, *args, **kwargs):
+        # Pull the specific child serializer from Meta
+        self.item_serializer_class = getattr(self.Meta, 'item_serializer_class', None)
+        self.item_source = getattr(self.Meta, 'item_source', 'items')
+        
+        if self.item_serializer_class is None:
+            raise AssertionError(
+                f"{self.__class__.__name__} must define 'item_serializer_class' in Meta."
+            )
+            
+        return super().__init__(*args, **kwargs)
 
-class BaseBatchCreateSerializer(serializers.ModelSerializer):
+    def get_items(self, obj):
+        # Fetch the related objects using the dynamic source name
+        queryset = getattr(obj, self.item_source).all()
+        # Use the injected serializer to represent them
+        return self.item_serializer_class(queryset, many=True, context=self.context).data
+
+
+class ApprovalBaseBatchCreateSerializer(serializers.ModelSerializer):
     # Define the field generically
-    item_ids = serializers.PrimaryKeyRelatedField(many=True, queryset=None)
+    item_ids = serializers.PrimaryKeyRelatedField(many=True, queryset=ApprovalItem)
 
     def __init__(self, *args, **kwargs):
         # 1. Pull custom config passed from the subclass or Meta
         self.item_queryset = getattr(self.Meta, 'item_queryset', None)
         self.item_source = getattr(self.Meta, 'item_source', 'items')
+
+        if self.item_queryset is None:
+            raise AssertionError(
+                f"{self.__class__.__name__} must define 'item_queryset' in Meta."
+            )
 
         super().__init__(*args, **kwargs)
 
