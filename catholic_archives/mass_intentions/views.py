@@ -41,7 +41,6 @@ class MassIntentionViewSet(GenericModelViewSet):
     - Weekly/Monthly summaries
     - Mass schedule view with actual dates
     """
-    queryset = MassIntention.objects.all()
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = [
         'mass_date', 
@@ -57,6 +56,9 @@ class MassIntentionViewSet(GenericModelViewSet):
     list_serializer = MassIntentionListSerializer
     regular_serializer = MassIntentionSerializer
     
+    def get_queryset(self, *args, **kwargs):
+        return MassIntention.objects.all()
+
     def perform_create(self, serializer):
         """Set recorder - calculations handled in model.save()"""
         serializer.save(recorder=self.request.user)
@@ -549,7 +551,6 @@ class MassIntentionBatchViewSet(BaseApprovalBatchViewSet):
     
     def get_queryset(self):
         """Filter batches - show upcoming masses first"""
-        queryset = MassIntentionApprovalBatch.objects.all()
         
         status_filter = self.request.query_params.get('status', None)
         if status_filter:
@@ -567,6 +568,9 @@ class MassIntentionBatchViewSet(BaseApprovalBatchViewSet):
             queryset = queryset.filter(raised_by=self.request.user)
         
         return queryset.order_by('-created_at')
+    
+    def get_queryset(self, *args, **kwargs):
+        return MassIntentionApprovalBatch.objects.all()
     
     @swagger_auto_schema(
         operation_description="Get batch with upcoming mass schedule",

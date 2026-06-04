@@ -35,6 +35,8 @@ class LoginSerializer(serializers.Serializer):
     username = serializers.CharField()
     password = serializers.CharField(style={'input_type': 'password'})
 
+class LogoutSerializer(serializers.Serializer):
+    pass
 class SystemSettingSerializer(serializers.ModelSerializer):
     class Meta:
         model = SystemSetting

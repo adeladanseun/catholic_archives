@@ -34,7 +34,6 @@ class ContributionViewSet(GenericModelViewSet):
     - Summary reports by year/group
     - Track recording user automatically
     """
-    queryset = YearlyContribution.objects.all()
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['year', 'group_name', 'is_approved', 'payment_date', 'batch']
     search_fields = ['payer_name']
@@ -44,6 +43,9 @@ class ContributionViewSet(GenericModelViewSet):
     list_serializer = ContributionListSerializer
     regular_serializer = ContributionSerializer
     
+    def get_queryset(self, *args, **kwargs):
+        return YearlyContribution.objects.all()
+
     def perform_create(self, serializer):
         """Automatically set the recorder to the current user"""
         serializer.save(recorder=self.request.user)

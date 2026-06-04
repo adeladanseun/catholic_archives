@@ -13,10 +13,7 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
 from .models import SystemSetting, GroupRate
-from .serializers import (
-    SystemSettingSerializer, GroupRateSerializer,
-    UserSerializer, UserRegistrationSerializer, LoginSerializer
-)
+from .serializers import *
 from .permissions import *
 
 User = get_user_model()
@@ -111,6 +108,7 @@ class LoginView(generics.GenericAPIView):
 class LogoutView(generics.GenericAPIView):
     """Logout by deleting your token"""
     permission_classes = [IsAuthenticated]
+    serializer_class = LogoutSerializer
     
     @swagger_auto_schema(
         operation_description="Logout and invalidate your token",
@@ -122,9 +120,11 @@ class LogoutView(generics.GenericAPIView):
 
 
 class UserViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.all()
     serializer_class = UserSerializer
     permission_classes = [IsAdminOrPriest]
+    
+    def get_queryset(self, *args, **kwargs):
+        return User.objects.all()
     
     @action(detail=False, methods=['get'])
     def me(self, request):
@@ -134,20 +134,24 @@ class UserViewSet(viewsets.ModelViewSet):
 
 
 class SystemSettingViewSet(viewsets.ModelViewSet):
-    queryset = SystemSetting.objects.all()
     serializer_class = SystemSettingSerializer
     permission_classes = [IsAuthenticated]
     lookup_field = 'key'
     
+    def get_queryset(self, *args, **kwargs):
+        return SystemSetting.objects.all()
+
     def get_object(self):
         return SystemSetting.objects.get(key=self.kwargs['key'])
 
 
 class GroupRateViewSet(viewsets.ModelViewSet):
-    queryset = GroupRate.objects.all()
     serializer_class = GroupRateSerializer
     permission_classes = [IsAuthenticated]
     
+    def get_queryset(self, *args, **kwargs):
+        return GroupRate.objects.all()
+
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
             self.permission_classes = [IsAdminOrPriest]
